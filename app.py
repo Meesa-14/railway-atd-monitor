@@ -1,16 +1,16 @@
-# app.py - Railway ATD Monitor with X and Y Parameters
+# app.py - Railway ATD Monitor with 4 Sensors (2X + 2Y)
 import streamlit as st
 import pandas as pd
 import numpy as np
 
 st.set_page_config(
-    page_title="Railway ATD Monitor - X & Y Parameters",
+    page_title="Railway ATD Monitor - 4 Sensor System",
     page_icon="🚂",
     layout="wide"
 )
 
 # ============================================================================
-# RDSO MASTER CHART DATA - X Values (mm between 2 moving pulleys)
+# RDSO MASTER CHART DATA (Same as before)
 # ============================================================================
 x_data = {
     "Temperature": [-5, 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90],
@@ -31,9 +31,6 @@ x_data = {
     750: [1810, 1764, 1683, 1619, 1555, 1491, 1428, 1364, 1300, 1236, 1173, 1109, 1045, 981, 918, 854, 790, 726, 663, 599],
 }
 
-# ============================================================================
-# RDSO MASTER CHART DATA - Y Values (mm from top of Muff to bottom of Counter weight)
-# ============================================================================
 y_data = {
     "Temperature": [-5, 0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90],
     50: [2702, 2689, 2677, 2664, 2651, 2638, 2626, 2613, 2600, 2587, 2575, 2562, 2549, 2536, 2524, 2511, 2498, 2485, 2473, 2460],
@@ -53,11 +50,8 @@ y_data = {
     750: [4130, 3939, 3748, 3556, 3365, 3314, 3174, 3096, 2600, 2409, 2218, 2026, 1835, 1644, 1453, 1261, 1070, 947, 698, 498],
 }
 
-# Convert to DataFrames
 df_x = pd.DataFrame(x_data)
 df_y = pd.DataFrame(y_data)
-
-# Mast Configuration
 tension_lengths = [50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 550, 600, 650, 700, 750]
 
 mast_config = pd.DataFrame({
@@ -68,59 +62,55 @@ mast_config = pd.DataFrame({
 })
 
 # ============================================================================
-# INTERPOLATION FUNCTIONS
+# INTERPOLATION FUNCTION
 # ============================================================================
 def interpolate_value(df, tension_length, temperature):
-    """Generic interpolation function for X or Y values"""
     temp_values = df['Temperature'].values
-    
-    # Find the column for this tension length
     if tension_length not in df.columns:
         closest = min(tension_lengths, key=lambda x: abs(x - tension_length))
         tension_length = closest
-    
-    # Boundary checks
     if temperature <= temp_values[0]:
         return df.loc[0, tension_length]
     if temperature >= temp_values[-1]:
         return df.loc[len(df)-1, tension_length]
-    
-    # Find surrounding temperatures
     lower_idx = np.searchsorted(temp_values, temperature) - 1
     upper_idx = lower_idx + 1
-    
     T_low = temp_values[lower_idx]
     T_high = temp_values[upper_idx]
     V_low = df.loc[lower_idx, tension_length]
     V_high = df.loc[upper_idx, tension_length]
-    
-    # Linear interpolation
     result = V_low + (V_high - V_low) * (temperature - T_low) / (T_high - T_low)
     return round(result, 1)
 
-def get_alert_level(delta_x, delta_y):
-    """Determine alert level based on both X and Y deltas"""
-    # Use the maximum delta for alert level
-    max_delta = max(delta_x, delta_y)
+# ============================================================================
+# ALERT FUNCTION (Uses MAX of all 4 deltas)
+# ============================================================================
+def get_alert_level(delta_x1, delta_x2, delta_y1, delta_y2):
+    """Determine alert based on ALL 4 sensors - INDEPENDENT evaluation"""
+    deltas = [delta_x1, delta_x2, delta_y1, delta_y2]
+    max_delta = max(deltas)
     
-    # Alert logic as per RDSO specifications
+    # Find which sensor has max delta
+    sensor_names = ["X1 (Left)", "X2 (Right)", "Y1 (Left)", "Y2 (Right)"]
+    max_sensor = sensor_names[deltas.index(max_delta)]
+    
     if max_delta <= 20:
-        return "✅ HEALTHY", "green", f"Delta: {max_delta:.1f}mm (X: {delta_x:.1f}mm, Y: {delta_y:.1f}mm)", max_delta
+        return "✅ HEALTHY", "green", f"Max Delta: {max_delta:.1f}mm (All sensors normal)", max_delta, max_sensor
     elif max_delta <= 40:
-        return "⚠️ MAINTENANCE REQUIRED", "yellow", f"Delta: {max_delta:.1f}mm (X: {delta_x:.1f}mm, Y: {delta_y:.1f}mm)", max_delta
+        return "⚠️ MAINTENANCE REQUIRED", "yellow", f"Max Delta: {max_delta:.1f}mm on {max_sensor}", max_delta, max_sensor
     elif max_delta <= 60:
-        return "🚨 URGENT ALERT", "orange", f"Delta: {max_delta:.1f}mm (X: {delta_x:.1f}mm, Y: {delta_y:.1f}mm)", max_delta
+        return "🚨 URGENT ALERT", "orange", f"Max Delta: {max_delta:.1f}mm on {max_sensor}", max_delta, max_sensor
     else:
-        return "🔴 CRITICAL FAILURE", "red", f"Delta: {max_delta:.1f}mm (X: {delta_x:.1f}mm, Y: {delta_y:.1f}mm)", max_delta
+        return "🔴 CRITICAL FAILURE", "red", f"Max Delta: {max_delta:.1f}mm on {max_sensor}", max_delta, max_sensor
 
 # ============================================================================
 # MAIN UI
 # ============================================================================
 st.title("🚂 Railway ATD Monitoring System")
-st.markdown("### RDSO Alert Logic - X & Y Parameter Monitoring")
-st.caption("Real-time monitoring of both X (moving pulleys) and Y (counter weight) parameters")
+st.markdown("### 4-Sensor System: 2X (Left/Right) + 2Y (Left/Right)")
+st.caption("⚠️ ANY sensor change triggers real-time alert evaluation")
 
-# Sidebar controls
+# Sidebar
 with st.sidebar:
     st.header("🎮 Control Panel")
     
@@ -128,190 +118,222 @@ with st.sidebar:
     mast_info = mast_config[mast_config['Mast_ID'] == selected_mast].iloc[0]
     tension_length = mast_info['Tension_Length']
     
-    st.info(f"📍 **Mast Details**\n\n- Tension Length: {tension_length}m\n- Location: {mast_info['Location']}")
+    st.info(f"📍 Tension Length: {tension_length}m | Location: {mast_info['Location']}")
     
     st.divider()
     
-    st.subheader("🌡️ Temperature Settings")
-    temperature = st.slider("Temperature (°C)", -5.0, 90.0, 35.0, 1.0)
+    st.subheader("🌡️ Temperature Sensor")
+    temperature = st.slider("Temperature (°C)", -5.0, 90.0, 35.0, 1.0, 
+                           help="Changing temperature updates expected X/Y values")
     
     st.divider()
     
-    st.subheader("📏 Sensor Readings (Simulated)")
-    x_reading = st.slider("X Parameter (mm) - Between moving pulleys", 400, 2000, 1300, 5)
-    y_reading = st.slider("Y Parameter (mm) - Counter weight position", 500, 4500, 2600, 5)
-    
-    st.divider()
-    
-    st.subheader("🎯 Demo Presets")
+    st.subheader("📏 X Sensors (Left & Right Pulleys)")
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("🟢 Healthy (Delta ≤ 20mm)", use_container_width=True):
-            expected_x = interpolate_value(df_x, tension_length, temperature)
-            expected_y = interpolate_value(df_y, tension_length, temperature)
-            st.session_state.x_reading = expected_x + 10
-            st.session_state.y_reading = expected_y + 10
-            st.rerun()
+        x1_reading = st.slider("X1 (Left Pulley) mm", 400, 2000, 1300, 5,
+                               help="Left side X parameter - BETWEEN moving pulleys")
     with col2:
-        if st.button("🔴 Critical (Delta > 60mm)", use_container_width=True):
-            expected_x = interpolate_value(df_x, tension_length, temperature)
-            expected_y = interpolate_value(df_y, tension_length, temperature)
-            st.session_state.x_reading = expected_x + 70
-            st.session_state.y_reading = expected_y + 70
-            st.rerun()
+        x2_reading = st.slider("X2 (Right Pulley) mm", 400, 2000, 1300, 5,
+                               help="Right side X parameter - BETWEEN moving pulleys")
+    
+    st.subheader("📏 Y Sensors (Left & Right)")
+    col3, col4 = st.columns(2)
+    with col3:
+        y1_reading = st.slider("Y1 (Left) mm", 500, 4500, 2600, 5,
+                               help="Left side Y parameter - Muff to counterweight")
+    with col4:
+        y2_reading = st.slider("Y2 (Right) mm", 500, 4500, 2600, 5,
+                               help="Right side Y parameter - Muff to counterweight")
+    
+    st.divider()
+    
+    st.subheader("🎯 Demo Scenarios")
+    if st.button("🟢 All Sensors Healthy", use_container_width=True):
+        expected_x = interpolate_value(df_x, tension_length, temperature)
+        expected_y = interpolate_value(df_y, tension_length, temperature)
+        st.session_state.x1_reading = expected_x + 5
+        st.session_state.x2_reading = expected_x + 5
+        st.session_state.y1_reading = expected_y + 5
+        st.session_state.y2_reading = expected_y + 5
+        st.rerun()
+    
+    if st.button("🔴 X1 Sensor Failure (Stuck)", use_container_width=True):
+        expected_x = interpolate_value(df_x, tension_length, temperature)
+        st.session_state.x1_reading = expected_x + 75  # Stuck high
+        st.rerun()
+    
+    if st.button("🟡 X2 Sensor Slight Deviation", use_container_width=True):
+        expected_x = interpolate_value(df_x, tension_length, temperature)
+        st.session_state.x2_reading = expected_x + 35  # 35mm delta → Yellow
+        st.rerun()
 
 # Initialize session state
-if 'x_reading' not in st.session_state:
-    st.session_state.x_reading = x_reading
-    st.session_state.y_reading = y_reading
+if 'x1_reading' not in st.session_state:
+    st.session_state.x1_reading = x1_reading
+    st.session_state.x2_reading = x2_reading
+    st.session_state.y1_reading = y1_reading
+    st.session_state.y2_reading = y2_reading
 else:
-    x_reading = st.session_state.x_reading
-    y_reading = st.session_state.y_reading
+    x1_reading = st.session_state.x1_reading
+    x2_reading = st.session_state.x2_reading
+    y1_reading = st.session_state.y1_reading
+    y2_reading = st.session_state.y2_reading
 
 # ============================================================================
-# CALCULATIONS
+# CALCULATIONS - Each sensor compared independently
 # ============================================================================
 expected_x = interpolate_value(df_x, tension_length, temperature)
 expected_y = interpolate_value(df_y, tension_length, temperature)
 
-delta_x = abs(x_reading - expected_x)
-delta_y = abs(y_reading - expected_y)
+delta_x1 = abs(x1_reading - expected_x)
+delta_x2 = abs(x2_reading - expected_x)
+delta_y1 = abs(y1_reading - expected_y)
+delta_y2 = abs(y2_reading - expected_y)
 
-status_text, color, details, max_delta = get_alert_level(delta_x, delta_y)
+status_text, color, details, max_delta, faulty_sensor = get_alert_level(delta_x1, delta_x2, delta_y1, delta_y2)
 
 # ============================================================================
-# VISUAL ALERT INDICATOR
+# MAIN ALERT INDICATOR
 # ============================================================================
-# Color mapping for the 4 alert levels
-color_map = {
-    "green": "#00FF00",      # Bright Green for Healthy
-    "yellow": "#FFFF00",     # Yellow for Maintenance Required  
-    "orange": "#FFA500",     # Orange for Urgent Alert
-    "red": "#FF0000"         # Red for Critical Failure
-}
+color_map = {"green": "#00FF00", "yellow": "#FFFF00", "orange": "#FFA500", "red": "#FF0000"}
+text_color = "#000000" if color in ["yellow"] else "#FFFFFF"
 
-# Display the large status indicator
 st.markdown(f"""
-<div style="background-color: {color_map[color]}; text-align: center; padding: 50px; border-radius: 25px; margin: 20px 0; box-shadow: 0 4px 8px rgba(0,0,0,0.2);">
-    <div style="font-size: 64px; font-weight: bold; color: {'#000000' if color == 'yellow' else '#FFFFFF'}; text-shadow: 2px 2px 4px rgba(0,0,0,0.3);">
+<div style="background-color: {color_map[color]}; text-align: center; padding: 40px; border-radius: 20px; margin: 20px 0; box-shadow: 0 4px 12px rgba(0,0,0,0.3);">
+    <div style="font-size: 56px; font-weight: bold; color: {text_color};">
         {status_text}
     </div>
-    <div style="font-size: 32px; color: {'#000000' if color == 'yellow' else '#FFFFFF'}; margin-top: 15px;">
+    <div style="font-size: 28px; color: {text_color}; margin-top: 15px;">
         Max Delta = {max_delta:.1f} mm
     </div>
-    <div style="font-size: 18px; color: {'#000000' if color == 'yellow' else '#FFFFFF'}; margin-top: 10px;">
+    <div style="font-size: 18px; color: {text_color}; margin-top: 10px;">
         {details}
     </div>
 </div>
 """, unsafe_allow_html=True)
 
-# Critical popup for demo
+# Critical popup
 if color == "red" and max_delta > 60:
-    st.toast("🚨 **CRITICAL FAILURE ALERT!** 🚨\nDelta exceeds 60mm - Immediate action required!", icon="🔴")
+    st.toast(f"🚨 CRITICAL FAILURE on {faulty_sensor}! Delta = {max_delta:.1f}mm", icon="🔴")
 
 # ============================================================================
 # THRESHOLD LEGEND
 # ============================================================================
-st.markdown("### 📊 Alert Thresholds")
-threshold_cols = st.columns(4)
-with threshold_cols[0]:
-    st.markdown("🟢 **0 – 20 mm**\n✅ HEALTHY")
-with threshold_cols[1]:
-    st.markdown("🟡 **21 – 40 mm**\n⚠️ MAINTENANCE REQUIRED")
-with threshold_cols[2]:
-    st.markdown("🟠 **41 – 60 mm**\n🚨 URGENT ALERT")
-with threshold_cols[3]:
-    st.markdown("🔴 **> 60 mm**\n🔴 CRITICAL FAILURE")
+st.markdown("### 📊 Alert Thresholds (Applies to EVERY sensor independently)")
+thresh_cols = st.columns(4)
+with thresh_cols[0]:
+    st.markdown("🟢 **0-20mm**\n✅ HEALTHY")
+with thresh_cols[1]:
+    st.markdown("🟡 **21-40mm**\n⚠️ MAINTENANCE")
+with thresh_cols[2]:
+    st.markdown("🟠 **41-60mm**\n🚨 URGENT")
+with thresh_cols[3]:
+    st.markdown("🔴 **>60mm**\n🔴 CRITICAL")
 
 # ============================================================================
-# METRICS DISPLAY
+# 4 SENSOR DISPLAY
 # ============================================================================
+st.subheader("📊 Individual Sensor Status")
+
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("📊 X Parameter (Moving Pulleys)")
-    x_col1, x_col2, x_col3 = st.columns(3)
-    with x_col1:
-        st.metric("Expected X", f"{expected_x:.1f} mm")
-    with x_col2:
-        st.metric("Reading X", f"{x_reading} mm", delta=f"{x_reading - expected_x:+.1f} mm", delta_color="inverse")
-    with x_col3:
-        st.metric("Delta X", f"{delta_x:.1f} mm")
+    st.markdown("### 🔵 LEFT SIDE")
+    
+    # X1 Sensor
+    x1_color = "🟢" if delta_x1 <= 20 else ("🟡" if delta_x1 <= 40 else ("🟠" if delta_x1 <= 60 else "🔴"))
+    st.metric(
+        "X1 (Left Pulley)", 
+        f"{x1_reading} mm", 
+        delta=f"{x1_reading - expected_x:+.1f} mm (Expected: {expected_x}mm)",
+        delta_color="inverse"
+    )
+    st.caption(f"{x1_color} Delta X1 = {delta_x1:.1f} mm")
+    
+    # Y1 Sensor
+    y1_color = "🟢" if delta_y1 <= 20 else ("🟡" if delta_y1 <= 40 else ("🟠" if delta_y1 <= 60 else "🔴"))
+    st.metric(
+        "Y1 (Left Counterweight)", 
+        f"{y1_reading} mm", 
+        delta=f"{y1_reading - expected_y:+.1f} mm (Expected: {expected_y}mm)",
+        delta_color="inverse"
+    )
+    st.caption(f"{y1_color} Delta Y1 = {delta_y1:.1f} mm")
 
 with col2:
-    st.subheader("📊 Y Parameter (Counter Weight)")
-    y_col1, y_col2, y_col3 = st.columns(3)
-    with y_col1:
-        st.metric("Expected Y", f"{expected_y:.1f} mm")
-    with y_col2:
-        st.metric("Reading Y", f"{y_reading} mm", delta=f"{y_reading - expected_y:+.1f} mm", delta_color="inverse")
-    with y_col3:
-        st.metric("Delta Y", f"{delta_y:.1f} mm")
+    st.markdown("### 🔴 RIGHT SIDE")
+    
+    # X2 Sensor
+    x2_color = "🟢" if delta_x2 <= 20 else ("🟡" if delta_x2 <= 40 else ("🟠" if delta_x2 <= 60 else "🔴"))
+    st.metric(
+        "X2 (Right Pulley)", 
+        f"{x2_reading} mm", 
+        delta=f"{x2_reading - expected_x:+.1f} mm (Expected: {expected_x}mm)",
+        delta_color="inverse"
+    )
+    st.caption(f"{x2_color} Delta X2 = {delta_x2:.1f} mm")
+    
+    # Y2 Sensor
+    y2_color = "🟢" if delta_y2 <= 20 else ("🟡" if delta_y2 <= 40 else ("🟠" if delta_y2 <= 60 else "🔴"))
+    st.metric(
+        "Y2 (Right Counterweight)", 
+        f"{y2_reading} mm", 
+        delta=f"{y2_reading - expected_y:+.1f} mm (Expected: {expected_y}mm)",
+        delta_color="inverse"
+    )
+    st.caption(f"{y2_color} Delta Y2 = {delta_y2:.1f} mm")
 
 # ============================================================================
-# CALCULATION DETAILS
+# SUMMARY TABLE
 # ============================================================================
-with st.expander("📐 Detailed Calculation", expanded=False):
-    st.markdown(f"""
-    **Temperature:** {temperature}°C
+with st.expander("📋 Complete Sensor Summary", expanded=True):
+    summary_data = {
+        "Sensor": ["X1 (Left Pulley)", "X2 (Right Pulley)", "Y1 (Left Weight)", "Y2 (Right Weight)"],
+        "Expected (mm)": [expected_x, expected_x, expected_y, expected_y],
+        "Actual (mm)": [x1_reading, x2_reading, y1_reading, y2_reading],
+        "Delta (mm)": [delta_x1, delta_x2, delta_y1, delta_y2],
+        "Status": [
+            "🟢" if delta_x1 <= 20 else ("🟡" if delta_x1 <= 40 else ("🟠" if delta_x1 <= 60 else "🔴")),
+            "🟢" if delta_x2 <= 20 else ("🟡" if delta_x2 <= 40 else ("🟠" if delta_x2 <= 60 else "🔴")),
+            "🟢" if delta_y1 <= 20 else ("🟡" if delta_y1 <= 40 else ("🟠" if delta_y1 <= 60 else "🔴")),
+            "🟢" if delta_y2 <= 20 else ("🟡" if delta_y2 <= 40 else ("🟠" if delta_y2 <= 60 else "🔴")),
+        ]
+    }
+    st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+
+# ============================================================================
+# EXPLANATION OF ALERT TRIGGERS
+# ============================================================================
+with st.expander("ℹ️ How Alerts are Triggered", expanded=True):
+    st.markdown("""
+    ### Alert Logic - ANY sensor change triggers re-evaluation:
     
-    **For X Parameter:**
-    - Expected X (interpolated from RDSO chart): {expected_x:.1f} mm
-    - Measured X Reading: {x_reading} mm
-    - **Delta X = {delta_x:.1f} mm**
+    | Action | What changes | Alert updates? |
+    |--------|-------------|----------------|
+    | Change Temperature | Expected X/Y values | ✅ YES - All deltas recalculated |
+    | Change X1 slider | X1 reading | ✅ YES - Delta X1 recalculated |
+    | Change X2 slider | X2 reading | ✅ YES - Delta X2 recalculated |
+    | Change Y1 slider | Y1 reading | ✅ YES - Delta Y1 recalculated |
+    | Change Y2 slider | Y2 reading | ✅ YES - Delta Y2 recalculated |
     
-    **For Y Parameter:**
-    - Expected Y (interpolated from RDSO chart): {expected_y:.1f} mm
-    - Measured Y Reading: {y_reading} mm
-    - **Delta Y = {delta_y:.1f} mm**
+    ### Real-World Failure Scenarios detected:
     
-    **Alert Decision:**
-    - Max Delta = MAX({delta_x:.1f}, {delta_y:.1f}) = {max_delta:.1f} mm
-    - Alert Level: **{status_text}**
+    1. **Left pulley stuck (X1 high, X2 normal)** → Delta X1 high → Alert triggered
+    2. **Right counterweight problem (Y2 abnormal)** → Delta Y2 high → Alert triggered  
+    3. **Temperature sensor failure** → Expected values wrong → All deltas affected
+    4. **One side working, other failed** → Independent detection per sensor
+    
+    ### Alert uses MAXIMUM delta across ALL 4 sensors:
+    - If ANY sensor has delta > threshold → Alert triggers
+    - Shows which sensor caused the alert
     """)
 
-# ============================================================================
-# DATA TABLES
-# ============================================================================
-tab1, tab2, tab3 = st.tabs(["📋 RDSO Chart - X Values", "📋 RDSO Chart - Y Values", "🏗️ Mast Configuration"])
-
-with tab1:
-    st.dataframe(df_x, use_container_width=True, height=400)
-    st.caption("X Parameter (mm) - Distance between 2 moving pulleys")
-
-with tab2:
-    st.dataframe(df_y, use_container_width=True, height=400)
-    st.caption("Y Parameter (mm) - Distance from top of Muff to bottom of Counter weight")
-
-with tab3:
-    st.dataframe(mast_config, use_container_width=True)
-
-# ============================================================================
-# TREND CHARTS
-# ============================================================================
-with st.expander("📈 Expected Values vs Temperature"):
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("X Parameter Trend")
-        temps = np.linspace(-5, 90, 50)
-        x_trend = [interpolate_value(df_x, tension_length, t) for t in temps]
-        x_trend_df = pd.DataFrame({'Temperature (°C)': temps, 'Expected X (mm)': x_trend})
-        st.line_chart(x_trend_df, x='Temperature (°C)', y='Expected X (mm)', use_container_width=True)
-    
-    with col2:
-        st.subheader("Y Parameter Trend")
-        y_trend = [interpolate_value(df_y, tension_length, t) for t in temps]
-        y_trend_df = pd.DataFrame({'Temperature (°C)': temps, 'Expected Y (mm)': y_trend})
-        st.line_chart(y_trend_df, x='Temperature (°C)', y='Expected Y (mm)', use_container_width=True)
-
-# ============================================================================
-# FOOTER
-# ============================================================================
-st.divider()
-st.caption("🚆 Railway ATD Monitor - RDSO Alert Logic Demonstration")
-st.caption("Alert thresholds: 🟢≤20mm | 🟡21-40mm | 🟠41-60mm | 🔴>60mm")
-
 # Update session state
-st.session_state.x_reading = x_reading
-st.session_state.y_reading = y_reading
+st.session_state.x1_reading = x1_reading
+st.session_state.x2_reading = x2_reading
+st.session_state.y1_reading = y1_reading
+st.session_state.y2_reading = y2_reading
+
+st.divider()
+st.caption("🚆 Railway ATD Monitor - 4 Sensor System (2X + 2Y) | ANY sensor change triggers real-time alert")
