@@ -1,14 +1,132 @@
-# app.py - Railway ATD Monitor with ATD Status Table (FIXED)
+# app.py - Railway ATD Monitor with Email Alerts (Critical Only)
 import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import hashlib
 
 st.set_page_config(
     page_title="Railway ATD Monitor - Complete Dashboard",
     page_icon="🚂",
     layout="wide"
 )
+
+# ============================================================================
+# EMAIL ALERT CONFIGURATION
+# ============================================================================
+
+# Email settings (You need to change these)
+EMAIL_CONFIG = {
+    'smtp_server': 'smtp.gmail.com',
+    'smtp_port': 587,
+    'sender_email': 'your_email@gmail.com',  # CHANGE THIS
+    'sender_password': 'your_app_password',   # CHANGE THIS (use App Password, not regular password)
+    'recipient_emails': [
+        'maintenance@railway.gov.in',  # CHANGE THIS
+        'control_room@railway.gov.in', # CHANGE THIS
+        'supervisor@railway.gov.in'    # CHANGE THIS
+    ]
+}
+
+# Track sent alerts to avoid spam (store in session state)
+if 'sent_alerts' not in st.session_state:
+    st.session_state.sent_alerts = {}
+
+def send_critical_alert(atd_id, location, chainage, max_delta, faulty_sensor, temperature, expected_x, expected_y):
+    """
+    Send email alert for critical failure (RED status only)
+    Returns: True if email sent successfully, False otherwise
+    """
+    
+    # Create a unique key for this alert (to avoid sending multiple emails for same issue)
+    alert_key = f"{atd_id}_{faulty_sensor}_{int(max_delta)}"
+    
+    # Check if we already sent this alert in the last 5 minutes
+    current_time = datetime.now()
+    if alert_key in st.session_state.sent_alerts:
+        last_sent = st.session_state.sent_alerts[alert_key]
+        time_diff = (current_time - last_sent).total_seconds() / 60
+        if time_diff < 5:  # Don't send if less than 5 minutes
+            return False
+    
+    # Prepare email content
+    subject = f"🚨 CRITICAL ALERT - {atd_id} - Railway ATD Failure"
+    
+    body = f"""
+    ⚠️⚠️⚠️ CRITICAL FAILURE ALERT ⚠️⚠️⚠️
+    
+    ATD Assembly: {atd_id}
+    Location: {location}
+    Chainage: {chainage}
+    Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}
+    
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    
+    📊 FAILURE DETAILS:
+    
+    • Fault Location: {faulty_sensor}
+    • Max Delta: {max_delta:.1f} mm (Critical threshold: >60mm)
+    • Current Temperature: {temperature}°C
+    
+    📈 EXPECTED VALUES (as per RDSO Chart):
+    
+    • Expected X Value: {expected_x} mm
+    • Expected Y Value: {expected_y} mm
+    
+    🔴 ACTUAL SENSOR READINGS:
+    
+    • X-N (North Pulley): {st.session_state.get(f'{atd_id}_n_x', 'N/A')} mm
+    • Y-N (North Weight): {st.session_state.get(f'{atd_id}_n_y', 'N/A')} mm
+    • X-S (South Pulley): {st.session_state.get(f'{atd_id}_s_x', 'N/A')} mm
+    • Y-S (South Weight): {st.session_state.get(f'{atd_id}_s_y', 'N/A')} mm
+    
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    
+    🚨 REQUIRED ACTION:
+    
+    1. IMMEDIATE inspection required at {location}
+    2. Check both North and South masts
+    3. Verify ATD pulley movement
+    4. Inspect counterweight assembly
+    5. Take photos for documentation
+    
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    
+    This is an automated alert from Railway ATD Monitoring System.
+    Please acknowledge receipt.
+    
+    """
+    
+    try:
+        # Create email message - Fixed: MIMEMultipart
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL_CONFIG['sender_email']
+        msg['To'] = ', '.join(EMAIL_CONFIG['recipient_emails'])
+        msg['Subject'] = subject
+        
+        # Fixed: MIMEText
+        msg.attach(MIMEText(body, 'plain'))
+        
+        # Send email
+        server = smtplib.SMTP(EMAIL_CONFIG['smtp_server'], EMAIL_CONFIG['smtp_port'])
+        server.starttls()
+        server.login(EMAIL_CONFIG['sender_email'], EMAIL_CONFIG['sender_password'])
+        server.send_message(msg)
+        server.quit()
+        
+        # Record that we sent this alert
+        st.session_state.sent_alerts[alert_key] = current_time
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"Failed to send email alert: {str(e)}")
+        return False
+
+# [REST OF YOUR CODE CONTINUES...]
 
 # ============================================================================
 # RDSO MASTER CHART DATA
@@ -56,7 +174,7 @@ df_y = pd.DataFrame(y_data)
 tension_lengths = [50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 550, 600, 650, 700, 750]
 
 # ============================================================================
-# ATD CONFIGURATION WITH N (NORTH) AND S (SOUTH) DIRECTION
+# ATD CONFIGURATION
 # ============================================================================
 atd_config = {
     'ATD 1': {
@@ -104,10 +222,10 @@ atd_config = {
 # Initialize session state for all ATDs
 for atd_id in atd_config.keys():
     if f'{atd_id}_n_x' not in st.session_state:
-        st.session_state[f'{atd_id}_n_x'] = 1300  # int value
-        st.session_state[f'{atd_id}_n_y'] = 2600  # int value
-        st.session_state[f'{atd_id}_s_x'] = 1300  # int value
-        st.session_state[f'{atd_id}_s_y'] = 2600  # int value
+        st.session_state[f'{atd_id}_n_x'] = 1300
+        st.session_state[f'{atd_id}_n_y'] = 2600
+        st.session_state[f'{atd_id}_s_x'] = 1300
+        st.session_state[f'{atd_id}_s_y'] = 2600
 
 # ============================================================================
 # INTERPOLATION FUNCTION
@@ -128,7 +246,7 @@ def interpolate_value(df, tension_length, temperature):
     V_low = df.loc[lower_idx, tension_length]
     V_high = df.loc[upper_idx, tension_length]
     result = V_low + (V_high - V_low) * (temperature - T_low) / (T_high - T_low)
-    return int(round(result, 0))  # Return int instead of float
+    return int(round(result, 0))
 
 # ============================================================================
 # FUNCTION TO GET STATUS COLOR AND TEXT
@@ -154,28 +272,23 @@ def create_atd_status_table(temperature):
     for atd_id, atd in atd_config.items():
         tension_length = atd['Tension_Length']
         
-        # Calculate expected values (returns int)
         expected_x = interpolate_value(df_x, tension_length, temperature)
         expected_y = interpolate_value(df_y, tension_length, temperature)
         
-        # Get current sensor values from session state
         n_x = st.session_state.get(f'{atd_id}_n_x', expected_x)
         n_y = st.session_state.get(f'{atd_id}_n_y', expected_y)
         s_x = st.session_state.get(f'{atd_id}_s_x', expected_x)
         s_y = st.session_state.get(f'{atd_id}_s_y', expected_y)
         
-        # Calculate deltas
         delta_n_x = abs(n_x - expected_x)
         delta_n_y = abs(n_y - expected_y)
         delta_s_x = abs(s_x - expected_x)
         delta_s_y = abs(s_y - expected_y)
         
-        # Get max delta for each side
         max_delta_n = max(delta_n_x, delta_n_y)
         max_delta_s = max(delta_s_x, delta_s_y)
         overall_max = max(max_delta_n, max_delta_s)
         
-        # Get status
         n_icon, n_status, n_color = get_status(max_delta_n)
         s_icon, s_status, s_color = get_status(max_delta_s)
         overall_icon, overall_status, overall_color = get_status(overall_max)
@@ -197,6 +310,7 @@ def create_atd_status_table(temperature):
             "North": f"{n_icon} {n_status}",
             "South": f"{s_icon} {s_status}",
             "Overall": f"{overall_icon} {overall_status}",
+            "Overall Color": overall_color
         })
     
     return pd.DataFrame(table_data)
@@ -207,32 +321,30 @@ def create_atd_status_table(temperature):
 with st.sidebar:
     st.header("🎮 Control Panel")
     
-    # Global Temperature for the table
+    # Email Configuration Warning
+    if EMAIL_CONFIG['sender_email'] == 'your_email@gmail.com':
+        st.warning("⚠️ **Email alerts not configured!**\n\nUpdate EMAIL_CONFIG in the code with your Gmail credentials to enable critical alerts.")
+    
     st.subheader("🌡️ Global Temperature Setting")
     global_temperature = st.slider(
         "Temperature for All ATDs (°C)", 
-        -5.0, 90.0, 35.0, 1.0,
-        help="This temperature is used to calculate expected values for ALL ATDs in the table"
+        -5.0, 90.0, 35.0, 1.0
     )
     
     st.divider()
     
-    # ATD Selection for detailed view
     st.subheader("🔍 Detailed View")
     selected_atd = st.selectbox(
         "Select ATD for Detailed Monitoring",
-        options=list(atd_config.keys()),
-        help="Select an ATD to view detailed sensor readings"
+        options=list(atd_config.keys())
     )
     
     atd = atd_config[selected_atd]
     tension_length = atd['Tension_Length']
     
-    # Get expected values for selected ATD (returns int)
     exp_x = interpolate_value(df_x, tension_length, global_temperature)
     exp_y = interpolate_value(df_y, tension_length, global_temperature)
     
-    # Get current values from session state
     current_n_x = st.session_state[f'{selected_atd}_n_x']
     current_n_y = st.session_state[f'{selected_atd}_n_y']
     current_s_x = st.session_state[f'{selected_atd}_s_x']
@@ -250,39 +362,32 @@ with st.sidebar:
     
     st.divider()
     
-    # North Direction Sensors
     st.subheader("🧭 NORTH DIRECTION")
     n_x = st.number_input(
         f"X-N (mm) - {atd['N_Mast']}", 
         min_value=400, max_value=2000, 
-        value=int(current_n_x), step=5,
-        help=f"Expected: {exp_x}mm at {global_temperature}°C"
+        value=int(current_n_x), step=5
     )
     n_y = st.number_input(
         f"Y-N (mm) - {atd['N_Mast']}", 
         min_value=500, max_value=4500, 
-        value=int(current_n_y), step=5,
-        help=f"Expected: {exp_y}mm at {global_temperature}°C"
+        value=int(current_n_y), step=5
     )
     
     st.divider()
     
-    # South Direction Sensors
     st.subheader("🧭 SOUTH DIRECTION")
     s_x = st.number_input(
         f"X-S (mm) - {atd['S_Mast']}", 
         min_value=400, max_value=2000, 
-        value=int(current_s_x), step=5,
-        help=f"Expected: {exp_x}mm at {global_temperature}°C"
+        value=int(current_s_x), step=5
     )
     s_y = st.number_input(
         f"Y-S (mm) - {atd['S_Mast']}", 
         min_value=500, max_value=4500, 
-        value=int(current_s_y), step=5,
-        help=f"Expected: {exp_y}mm at {global_temperature}°C"
+        value=int(current_s_y), step=5
     )
     
-    # Update session state
     st.session_state[f'{selected_atd}_n_x'] = n_x
     st.session_state[f'{selected_atd}_n_y'] = n_y
     st.session_state[f'{selected_atd}_s_x'] = s_x
@@ -290,7 +395,6 @@ with st.sidebar:
     
     st.divider()
     
-    # Quick Actions
     st.subheader("🎯 Quick Actions")
     if st.button("🟢 Set All Sensors to Expected", use_container_width=True):
         for atd_id in atd_config.keys():
@@ -303,7 +407,7 @@ with st.sidebar:
             st.session_state[f'{atd_id}_s_y'] = exp_y_val
         st.rerun()
     
-    if st.button("🔴 Simulate Failure on All ATDs", use_container_width=True):
+    if st.button("🔴 Simulate Critical Failure (Sends Email)", use_container_width=True):
         for atd_id in atd_config.keys():
             tl = atd_config[atd_id]['Tension_Length']
             exp_x_val = interpolate_value(df_x, tl, global_temperature)
@@ -313,17 +417,78 @@ with st.sidebar:
         st.rerun()
 
 # ============================================================================
-# MAIN DISPLAY - ATD STATUS TABLE (TOP OF PAGE)
+# MAIN DISPLAY - ATD STATUS TABLE
 # ============================================================================
 st.title("🚂 Railway ATD Monitoring System")
 st.markdown(f"### 📊 Live ATD Status Dashboard")
 st.caption(f"🔍 Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Global Temperature: {global_temperature}°C")
 
-# Create and display the ATD Status Table
+# Create status table
 df_status = create_atd_status_table(global_temperature)
 
-# Display the table
+# ============================================================================
+# CHECK FOR CRITICAL ALERTS AND SEND EMAILS
+# ============================================================================
+
+# Check each ATD for critical status and send email alerts
+for idx, row in df_status.iterrows():
+    if "CRITICAL" in row['Overall']:
+        atd_id = row['ATD']
+        location = row['Location']
+        chainage = row['Chainage']
+        
+        # Calculate actual delta for this ATD
+        n_x_val = row['N-X']
+        n_y_val = row['N-Y']
+        s_x_val = row['S-X']
+        s_y_val = row['S-Y']
+        exp_x_val = row['Exp X']
+        exp_y_val = row['Exp Y']
+        
+        delta_n_x = abs(n_x_val - exp_x_val)
+        delta_n_y = abs(n_y_val - exp_y_val)
+        delta_s_x = abs(s_x_val - exp_x_val)
+        delta_s_y = abs(s_y_val - exp_y_val)
+        
+        deltas = [delta_n_x, delta_n_y, delta_s_x, delta_s_y]
+        max_delta = max(deltas)
+        sensor_names = ["X-N (North Pulley)", "Y-N (North Weight)", "X-S (South Pulley)", "Y-S (South Weight)"]
+        faulty_sensor = sensor_names[deltas.index(max_delta)]
+        
+        # Send email alert (only if configured)
+        if EMAIL_CONFIG['sender_email'] != 'your_email@gmail.com':
+            email_sent = send_critical_alert(
+                atd_id, location, chainage, max_delta, 
+                faulty_sensor, global_temperature, exp_x_val, exp_y_val
+            )
+            if email_sent:
+                st.success(f"📧 Critical email alert sent for {atd_id}!")
+        else:
+            # Show warning in the UI for demo purposes
+            st.warning(f"🔴 CRITICAL on {atd_id} - {faulty_sensor} (Delta: {max_delta:.0f}mm) - Email would be sent in production!")
+
+# ============================================================================
+# DISPLAY STATUS TABLE
+# ============================================================================
 st.subheader("📋 Complete ATD Status Overview")
+
+# Color code the dataframe for display
+# Color code the dataframe for display
+def color_cells(val):
+    if isinstance(val, str):
+        if "CRITICAL" in val:
+            return 'background-color: #ffcccc; color: #cc0000'
+        elif "URGENT" in val:
+            return 'background-color: #ffe0cc; color: #ff6600'
+        elif "MAINTENANCE" in val:
+            return 'background-color: #ffffcc; color: #cc9900'
+        elif "HEALTHY" in val:
+            return 'background-color: #ccffcc; color: #006600'
+    return ''
+
+# Fixed: Changed applymap to map
+styled_df = df_status.style.map(color_cells, subset=['North', 'South', 'Overall'])
+
 st.dataframe(
     df_status, 
     use_container_width=True, 
@@ -342,14 +507,12 @@ st.dataframe(
         "S-Y": st.column_config.NumberColumn("S-Y", width="small"),
         "N Δ": st.column_config.NumberColumn("N Δ", width="small"),
         "S Δ": st.column_config.NumberColumn("S Δ", width="small"),
-        "North": st.column_config.TextColumn("North Status", width="medium"),
-        "South": st.column_config.TextColumn("South Status", width="medium"),
+        "North": st.column_config.TextColumn("North", width="medium"),
+        "South": st.column_config.TextColumn("South", width="medium"),
         "Overall": st.column_config.TextColumn("Overall", width="medium"),
     }
 )
-
 # Summary statistics
-st.markdown("### 📈 Summary Statistics")
 col1, col2, col3, col4, col5 = st.columns(5)
 
 healthy_count = len(df_status[df_status['Overall'].str.contains('HEALTHY')])
@@ -375,7 +538,6 @@ st.divider()
 # ============================================================================
 st.markdown(f"## 🔍 Detailed View: {selected_atd}")
 
-# Calculate deltas for selected ATD
 exp_x_detailed = interpolate_value(df_x, atd['Tension_Length'], global_temperature)
 exp_y_detailed = interpolate_value(df_y, atd['Tension_Length'], global_temperature)
 
@@ -392,7 +554,6 @@ n_icon_detailed, n_status_detailed, n_color_detailed = get_status(max_delta_n_de
 s_icon_detailed, s_status_detailed, s_color_detailed = get_status(max_delta_s_detailed)
 overall_icon_detailed, overall_status_detailed, overall_color_detailed = get_status(overall_max_detailed)
 
-# Main alert indicator for selected ATD
 color_map = {"green": "#00FF00", "yellow": "#FFFF00", "orange": "#FFA500", "red": "#FF0000"}
 bg_color = color_map[overall_color_detailed]
 text_color = "#000000" if overall_color_detailed == "yellow" else "#FFFFFF"
@@ -406,65 +567,4 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 if overall_color_detailed == "red" and overall_max_detailed > 60:
-    st.error(f"""
-    🚨 **CRITICAL FAILURE ALERT - {selected_atd}** 🚨
-    - Max Delta: {overall_max_detailed:.0f}mm exceeds critical threshold (60mm)
-    - Location: {atd['Location']} | Chainage: {atd['Chainage']}
-    - Immediate inspection required!
-    """)
-
-# Two-column display for North and South
-col_n, col_s = st.columns(2)
-
-with col_n:
-    st.markdown(f"### 🧭 NORTH DIRECTION - {atd['N_Mast']}")
-    st.markdown(f"**Status:** {n_icon_detailed} {n_status_detailed} | **Max Delta:** {max_delta_n_detailed:.0f}mm")
-    
-    # X-N and Y-N sensors
-    col_n1, col_n2 = st.columns(2)
-    with col_n1:
-        st.metric("X-N (Pulley)", f"{n_x} mm", delta=f"{n_x - exp_x_detailed:+.0f} mm")
-        st.metric("Y-N (Weight)", f"{n_y} mm", delta=f"{n_y - exp_y_detailed:+.0f} mm")
-    with col_n2:
-        st.metric("Delta X-N", f"{delta_n_x_detailed:.0f} mm")
-        st.metric("Delta Y-N", f"{delta_n_y_detailed:.0f} mm")
-    
-    # Progress bar
-    st.progress(min(max_delta_n_detailed / 100, 1.0))
-
-with col_s:
-    st.markdown(f"### 🧭 SOUTH DIRECTION - {atd['S_Mast']}")
-    st.markdown(f"**Status:** {s_icon_detailed} {s_status_detailed} | **Max Delta:** {max_delta_s_detailed:.0f}mm")
-    
-    # X-S and Y-S sensors
-    col_s1, col_s2 = st.columns(2)
-    with col_s1:
-        st.metric("X-S (Pulley)", f"{s_x} mm", delta=f"{s_x - exp_x_detailed:+.0f} mm")
-        st.metric("Y-S (Weight)", f"{s_y} mm", delta=f"{s_y - exp_y_detailed:+.0f} mm")
-    with col_s2:
-        st.metric("Delta X-S", f"{delta_s_x_detailed:.0f} mm")
-        st.metric("Delta Y-S", f"{delta_s_y_detailed:.0f} mm")
-    
-    # Progress bar
-    st.progress(min(max_delta_s_detailed / 100, 1.0))
-
-# ============================================================================
-# THRESHOLD LEGEND
-# ============================================================================
-with st.expander("📊 Alert Threshold Legend", expanded=False):
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.markdown("🟢 **0-20mm**\n✅ HEALTHY\nNo action required")
-    with col2:
-        st.markdown("🟡 **21-40mm**\n⚠️ MAINTENANCE\nSchedule inspection")
-    with col3:
-        st.markdown("🟠 **41-60mm**\n🚨 URGENT\nInspect within 24hrs")
-    with col4:
-        st.markdown("🔴 **>60mm**\n🔴 CRITICAL\nImmediate action!")
-
-# ============================================================================
-# FOOTER
-# ============================================================================
-st.divider()
-st.caption("🚆 Railway ATD Monitoring System | N/S Direction Configuration | RDSO Alert Logic")
-st.caption("📊 Table shows all ATDs | Use sidebar to adjust sensor readings for any ATD")
+    st
