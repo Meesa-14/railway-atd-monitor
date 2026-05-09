@@ -1,10 +1,11 @@
-# app.py - Railway ATD Monitor - FULLY WORKING WITH ALERTS
+# app.py - Railway ATD Monitor with ATD Status Table (FIXED)
 import streamlit as st
 import pandas as pd
 import numpy as np
+from datetime import datetime
 
 st.set_page_config(
-    page_title="Railway ATD Monitor - 4 Sensor System",
+    page_title="Railway ATD Monitor - Complete Dashboard",
     page_icon="🚂",
     layout="wide"
 )
@@ -54,12 +55,59 @@ df_x = pd.DataFrame(x_data)
 df_y = pd.DataFrame(y_data)
 tension_lengths = [50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 550, 600, 650, 700, 750]
 
-mast_config = pd.DataFrame({
-    'Mast_ID': [f'Mast_{i}' for i in range(1, 11)],
-    'Tension_Length': [200, 250, 300, 350, 400, 450, 500, 550, 600, 650],
-    'Location': ['Station A', 'Station A', 'Station B', 'Station B', 'Station C', 
-                 'Station C', 'Station D', 'Station D', 'Station E', 'Station E']
-})
+# ============================================================================
+# ATD CONFIGURATION WITH N (NORTH) AND S (SOUTH) DIRECTION
+# ============================================================================
+atd_config = {
+    'ATD 1': {
+        'N_Mast': 'ATD 1 - N',
+        'S_Mast': 'ATD 1 - S',
+        'Tension_Length': 300,
+        'Location': 'Station A',
+        'Track': 'Track 1',
+        'Chainage': '100+200',
+    },
+    'ATD 2': {
+        'N_Mast': 'ATD 2 - N',
+        'S_Mast': 'ATD 2 - S',
+        'Tension_Length': 400,
+        'Location': 'Station B',
+        'Track': 'Track 2',
+        'Chainage': '105+500',
+    },
+    'ATD 3': {
+        'N_Mast': 'ATD 3 - N',
+        'S_Mast': 'ATD 3 - S',
+        'Tension_Length': 500,
+        'Location': 'Station C',
+        'Track': 'Track 1',
+        'Chainage': '112+300',
+    },
+    'ATD 4': {
+        'N_Mast': 'ATD 4 - N',
+        'S_Mast': 'ATD 4 - S',
+        'Tension_Length': 600,
+        'Location': 'Station D',
+        'Track': 'Track 2',
+        'Chainage': '118+900',
+    },
+    'ATD 5': {
+        'N_Mast': 'ATD 5 - N',
+        'S_Mast': 'ATD 5 - S',
+        'Tension_Length': 650,
+        'Location': 'Station E',
+        'Track': 'Track 1',
+        'Chainage': '125+400',
+    },
+}
+
+# Initialize session state for all ATDs
+for atd_id in atd_config.keys():
+    if f'{atd_id}_n_x' not in st.session_state:
+        st.session_state[f'{atd_id}_n_x'] = 1300  # int value
+        st.session_state[f'{atd_id}_n_y'] = 2600  # int value
+        st.session_state[f'{atd_id}_s_x'] = 1300  # int value
+        st.session_state[f'{atd_id}_s_y'] = 2600  # int value
 
 # ============================================================================
 # INTERPOLATION FUNCTION
@@ -70,9 +118,9 @@ def interpolate_value(df, tension_length, temperature):
         closest = min(tension_lengths, key=lambda x: abs(x - tension_length))
         tension_length = closest
     if temperature <= temp_values[0]:
-        return df.loc[0, tension_length]
+        return int(df.loc[0, tension_length])
     if temperature >= temp_values[-1]:
-        return df.loc[len(df)-1, tension_length]
+        return int(df.loc[len(df)-1, tension_length])
     lower_idx = np.searchsorted(temp_values, temperature) - 1
     upper_idx = lower_idx + 1
     T_low = temp_values[lower_idx]
@@ -80,25 +128,78 @@ def interpolate_value(df, tension_length, temperature):
     V_low = df.loc[lower_idx, tension_length]
     V_high = df.loc[upper_idx, tension_length]
     result = V_low + (V_high - V_low) * (temperature - T_low) / (T_high - T_low)
-    return round(result, 1)
+    return int(round(result, 0))  # Return int instead of float
 
 # ============================================================================
-# ALERT FUNCTION
+# FUNCTION TO GET STATUS COLOR AND TEXT
 # ============================================================================
-def get_alert_level(delta_x1, delta_x2, delta_y1, delta_y2):
-    deltas = [delta_x1, delta_x2, delta_y1, delta_y2]
-    max_delta = max(deltas)
-    sensor_names = ["X1 (Left Pulley)", "X2 (Right Pulley)", "Y1 (Left Weight)", "Y2 (Right Weight)"]
-    max_sensor = sensor_names[deltas.index(max_delta)]
-    
-    if max_delta <= 20:
-        return "✅ HEALTHY", "green", max_delta, max_sensor
-    elif max_delta <= 40:
-        return "⚠️ MAINTENANCE REQUIRED", "yellow", max_delta, max_sensor
-    elif max_delta <= 60:
-        return "🚨 URGENT ALERT", "orange", max_delta, max_sensor
+def get_status(delta):
+    if delta <= 20:
+        return "🟢", "HEALTHY", "green"
+    elif delta <= 40:
+        return "🟡", "MAINTENANCE", "yellow"
+    elif delta <= 60:
+        return "🟠", "URGENT", "orange"
     else:
-        return "🔴 CRITICAL FAILURE", "red", max_delta, max_sensor
+        return "🔴", "CRITICAL", "red"
+
+# ============================================================================
+# CREATE ATD STATUS TABLE
+# ============================================================================
+def create_atd_status_table(temperature):
+    """Generate a comprehensive status table for all ATDs"""
+    
+    table_data = []
+    
+    for atd_id, atd in atd_config.items():
+        tension_length = atd['Tension_Length']
+        
+        # Calculate expected values (returns int)
+        expected_x = interpolate_value(df_x, tension_length, temperature)
+        expected_y = interpolate_value(df_y, tension_length, temperature)
+        
+        # Get current sensor values from session state
+        n_x = st.session_state.get(f'{atd_id}_n_x', expected_x)
+        n_y = st.session_state.get(f'{atd_id}_n_y', expected_y)
+        s_x = st.session_state.get(f'{atd_id}_s_x', expected_x)
+        s_y = st.session_state.get(f'{atd_id}_s_y', expected_y)
+        
+        # Calculate deltas
+        delta_n_x = abs(n_x - expected_x)
+        delta_n_y = abs(n_y - expected_y)
+        delta_s_x = abs(s_x - expected_x)
+        delta_s_y = abs(s_y - expected_y)
+        
+        # Get max delta for each side
+        max_delta_n = max(delta_n_x, delta_n_y)
+        max_delta_s = max(delta_s_x, delta_s_y)
+        overall_max = max(max_delta_n, max_delta_s)
+        
+        # Get status
+        n_icon, n_status, n_color = get_status(max_delta_n)
+        s_icon, s_status, s_color = get_status(max_delta_s)
+        overall_icon, overall_status, overall_color = get_status(overall_max)
+        
+        table_data.append({
+            "ATD": atd_id,
+            "Location": atd['Location'],
+            "Track": atd['Track'],
+            "Chainage": atd['Chainage'],
+            "Tension (m)": tension_length,
+            "Exp X": expected_x,
+            "Exp Y": expected_y,
+            "N-X": n_x,
+            "N-Y": n_y,
+            "S-X": s_x,
+            "S-Y": s_y,
+            "N Δ": max_delta_n,
+            "S Δ": max_delta_s,
+            "North": f"{n_icon} {n_status}",
+            "South": f"{s_icon} {s_status}",
+            "Overall": f"{overall_icon} {overall_status}",
+        })
+    
+    return pd.DataFrame(table_data)
 
 # ============================================================================
 # SIDEBAR CONTROLS
@@ -106,192 +207,264 @@ def get_alert_level(delta_x1, delta_x2, delta_y1, delta_y2):
 with st.sidebar:
     st.header("🎮 Control Panel")
     
-    selected_mast = st.selectbox("Select Mast", mast_config['Mast_ID'].tolist())
-    mast_info = mast_config[mast_config['Mast_ID'] == selected_mast].iloc[0]
-    tension_length = mast_info['Tension_Length']
-    
-    st.info(f"📍 Tension Length: {tension_length}m | Location: {mast_info['Location']}")
-    
-    st.divider()
-    
-    st.subheader("🌡️ Temperature Sensor")
-    temperature = st.slider("Temperature (°C)", -5.0, 90.0, 35.0, 1.0)
+    # Global Temperature for the table
+    st.subheader("🌡️ Global Temperature Setting")
+    global_temperature = st.slider(
+        "Temperature for All ATDs (°C)", 
+        -5.0, 90.0, 35.0, 1.0,
+        help="This temperature is used to calculate expected values for ALL ATDs in the table"
+    )
     
     st.divider()
     
-    st.subheader("📏 X Sensors")
-    x1 = st.slider("X1 (Left Pulley) mm", 400, 2000, 1300, 5)
-    x2 = st.slider("X2 (Right Pulley) mm", 400, 2000, 1300, 5)
+    # ATD Selection for detailed view
+    st.subheader("🔍 Detailed View")
+    selected_atd = st.selectbox(
+        "Select ATD for Detailed Monitoring",
+        options=list(atd_config.keys()),
+        help="Select an ATD to view detailed sensor readings"
+    )
     
-    st.subheader("📏 Y Sensors")
-    y1 = st.slider("Y1 (Left Counterweight) mm", 500, 4500, 2600, 5)
-    y2 = st.slider("Y2 (Right Counterweight) mm", 500, 4500, 2600, 5)
+    atd = atd_config[selected_atd]
+    tension_length = atd['Tension_Length']
+    
+    # Get expected values for selected ATD (returns int)
+    exp_x = interpolate_value(df_x, tension_length, global_temperature)
+    exp_y = interpolate_value(df_y, tension_length, global_temperature)
+    
+    # Get current values from session state
+    current_n_x = st.session_state[f'{selected_atd}_n_x']
+    current_n_y = st.session_state[f'{selected_atd}_n_y']
+    current_s_x = st.session_state[f'{selected_atd}_s_x']
+    current_s_y = st.session_state[f'{selected_atd}_s_y']
+    
+    st.info(f"""
+    📍 **{selected_atd} Details**
+    - 🧭 North: {atd['N_Mast']}
+    - 🧭 South: {atd['S_Mast']}
+    - 📏 Tension: {tension_length}m
+    - 📍 Location: {atd['Location']}
+    - 🛤️ Track: {atd['Track']}
+    - 📊 Chainage: {atd['Chainage']}
+    """)
     
     st.divider()
     
-    st.subheader("🎯 Quick Test")
-    if st.button("Test: Set X1 to Critical (1375mm)"):
-        x1 = 1375
+    # North Direction Sensors
+    st.subheader("🧭 NORTH DIRECTION")
+    n_x = st.number_input(
+        f"X-N (mm) - {atd['N_Mast']}", 
+        min_value=400, max_value=2000, 
+        value=int(current_n_x), step=5,
+        help=f"Expected: {exp_x}mm at {global_temperature}°C"
+    )
+    n_y = st.number_input(
+        f"Y-N (mm) - {atd['N_Mast']}", 
+        min_value=500, max_value=4500, 
+        value=int(current_n_y), step=5,
+        help=f"Expected: {exp_y}mm at {global_temperature}°C"
+    )
+    
+    st.divider()
+    
+    # South Direction Sensors
+    st.subheader("🧭 SOUTH DIRECTION")
+    s_x = st.number_input(
+        f"X-S (mm) - {atd['S_Mast']}", 
+        min_value=400, max_value=2000, 
+        value=int(current_s_x), step=5,
+        help=f"Expected: {exp_x}mm at {global_temperature}°C"
+    )
+    s_y = st.number_input(
+        f"Y-S (mm) - {atd['S_Mast']}", 
+        min_value=500, max_value=4500, 
+        value=int(current_s_y), step=5,
+        help=f"Expected: {exp_y}mm at {global_temperature}°C"
+    )
+    
+    # Update session state
+    st.session_state[f'{selected_atd}_n_x'] = n_x
+    st.session_state[f'{selected_atd}_n_y'] = n_y
+    st.session_state[f'{selected_atd}_s_x'] = s_x
+    st.session_state[f'{selected_atd}_s_y'] = s_y
+    
+    st.divider()
+    
+    # Quick Actions
+    st.subheader("🎯 Quick Actions")
+    if st.button("🟢 Set All Sensors to Expected", use_container_width=True):
+        for atd_id in atd_config.keys():
+            tl = atd_config[atd_id]['Tension_Length']
+            exp_x_val = interpolate_value(df_x, tl, global_temperature)
+            exp_y_val = interpolate_value(df_y, tl, global_temperature)
+            st.session_state[f'{atd_id}_n_x'] = exp_x_val
+            st.session_state[f'{atd_id}_n_y'] = exp_y_val
+            st.session_state[f'{atd_id}_s_x'] = exp_x_val
+            st.session_state[f'{atd_id}_s_y'] = exp_y_val
         st.rerun()
-    if st.button("Reset All to Expected Values"):
-        exp_x = interpolate_value(df_x, tension_length, temperature)
-        exp_y = interpolate_value(df_y, tension_length, temperature)
-        x1, x2, y1, y2 = exp_x, exp_x, exp_y, exp_y
+    
+    if st.button("🔴 Simulate Failure on All ATDs", use_container_width=True):
+        for atd_id in atd_config.keys():
+            tl = atd_config[atd_id]['Tension_Length']
+            exp_x_val = interpolate_value(df_x, tl, global_temperature)
+            exp_y_val = interpolate_value(df_y, tl, global_temperature)
+            st.session_state[f'{atd_id}_n_x'] = exp_x_val + 75
+            st.session_state[f'{atd_id}_s_y'] = exp_y_val + 75
         st.rerun()
 
 # ============================================================================
-# CALCULATIONS
+# MAIN DISPLAY - ATD STATUS TABLE (TOP OF PAGE)
 # ============================================================================
-expected_x = interpolate_value(df_x, tension_length, temperature)
-expected_y = interpolate_value(df_y, tension_length, temperature)
+st.title("🚂 Railway ATD Monitoring System")
+st.markdown(f"### 📊 Live ATD Status Dashboard")
+st.caption(f"🔍 Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | Global Temperature: {global_temperature}°C")
 
-delta_x1 = abs(x1 - expected_x)
-delta_x2 = abs(x2 - expected_x)
-delta_y1 = abs(y1 - expected_y)
-delta_y2 = abs(y2 - expected_y)
+# Create and display the ATD Status Table
+df_status = create_atd_status_table(global_temperature)
 
-status_text, color, max_delta, faulty_sensor = get_alert_level(delta_x1, delta_x2, delta_y1, delta_y2)
+# Display the table
+st.subheader("📋 Complete ATD Status Overview")
+st.dataframe(
+    df_status, 
+    use_container_width=True, 
+    height=400,
+    column_config={
+        "ATD": st.column_config.TextColumn("ATD", width="small"),
+        "Location": st.column_config.TextColumn("Location", width="small"),
+        "Track": st.column_config.TextColumn("Track", width="small"),
+        "Chainage": st.column_config.TextColumn("Chainage", width="small"),
+        "Tension (m)": st.column_config.NumberColumn("Tension", width="small"),
+        "Exp X": st.column_config.NumberColumn("Exp X", width="small"),
+        "Exp Y": st.column_config.NumberColumn("Exp Y", width="small"),
+        "N-X": st.column_config.NumberColumn("N-X", width="small"),
+        "N-Y": st.column_config.NumberColumn("N-Y", width="small"),
+        "S-X": st.column_config.NumberColumn("S-X", width="small"),
+        "S-Y": st.column_config.NumberColumn("S-Y", width="small"),
+        "N Δ": st.column_config.NumberColumn("N Δ", width="small"),
+        "S Δ": st.column_config.NumberColumn("S Δ", width="small"),
+        "North": st.column_config.TextColumn("North Status", width="medium"),
+        "South": st.column_config.TextColumn("South Status", width="medium"),
+        "Overall": st.column_config.TextColumn("Overall", width="medium"),
+    }
+)
+
+# Summary statistics
+st.markdown("### 📈 Summary Statistics")
+col1, col2, col3, col4, col5 = st.columns(5)
+
+healthy_count = len(df_status[df_status['Overall'].str.contains('HEALTHY')])
+maintenance_count = len(df_status[df_status['Overall'].str.contains('MAINTENANCE')])
+urgent_count = len(df_status[df_status['Overall'].str.contains('URGENT')])
+critical_count = len(df_status[df_status['Overall'].str.contains('CRITICAL')])
+
+with col1:
+    st.metric("Total ATDs", len(df_status))
+with col2:
+    st.metric("🟢 Healthy", healthy_count)
+with col3:
+    st.metric("🟡 Maintenance", maintenance_count)
+with col4:
+    st.metric("🟠 Urgent", urgent_count)
+with col5:
+    st.metric("🔴 Critical", critical_count)
+
+st.divider()
 
 # ============================================================================
-# DISPLAY CURRENT CONDITIONS
+# DETAILED VIEW FOR SELECTED ATD
 # ============================================================================
-st.info(f"**📍 Current Conditions:** Temperature = **{temperature}°C** | Tension Length = **{tension_length}m**")
-st.info(f"**📊 Expected Values:** X = **{expected_x}mm** | Y = **{expected_y}mm**")
+st.markdown(f"## 🔍 Detailed View: {selected_atd}")
 
-# ============================================================================
-# MAIN ALERT INDICATOR
-# ============================================================================
+# Calculate deltas for selected ATD
+exp_x_detailed = interpolate_value(df_x, atd['Tension_Length'], global_temperature)
+exp_y_detailed = interpolate_value(df_y, atd['Tension_Length'], global_temperature)
+
+delta_n_x_detailed = abs(n_x - exp_x_detailed)
+delta_n_y_detailed = abs(n_y - exp_y_detailed)
+delta_s_x_detailed = abs(s_x - exp_x_detailed)
+delta_s_y_detailed = abs(s_y - exp_y_detailed)
+
+max_delta_n_detailed = max(delta_n_x_detailed, delta_n_y_detailed)
+max_delta_s_detailed = max(delta_s_x_detailed, delta_s_y_detailed)
+overall_max_detailed = max(max_delta_n_detailed, max_delta_s_detailed)
+
+n_icon_detailed, n_status_detailed, n_color_detailed = get_status(max_delta_n_detailed)
+s_icon_detailed, s_status_detailed, s_color_detailed = get_status(max_delta_s_detailed)
+overall_icon_detailed, overall_status_detailed, overall_color_detailed = get_status(overall_max_detailed)
+
+# Main alert indicator for selected ATD
 color_map = {"green": "#00FF00", "yellow": "#FFFF00", "orange": "#FFA500", "red": "#FF0000"}
-bg_color = color_map[color]
-text_color = "#000000" if color == "yellow" else "#FFFFFF"
+bg_color = color_map[overall_color_detailed]
+text_color = "#000000" if overall_color_detailed == "yellow" else "#FFFFFF"
 
 st.markdown(f"""
-<div style="background-color: {bg_color}; text-align: center; padding: 40px; border-radius: 20px; margin: 20px 0;">
-    <div style="font-size: 56px; font-weight: bold; color: {text_color};">{status_text}</div>
-    <div style="font-size: 32px; color: {text_color}; margin-top: 10px;">Max Delta = {max_delta:.1f} mm</div>
-    <div style="font-size: 20px; color: {text_color}; margin-top: 5px;">Faulty Sensor: {faulty_sensor}</div>
+<div style="background-color: {bg_color}; text-align: center; padding: 30px; border-radius: 20px; margin: 20px 0;">
+    <div style="font-size: 48px; font-weight: bold; color: {text_color};">{overall_icon_detailed} {overall_status_detailed}</div>
+    <div style="font-size: 24px; color: {text_color}; margin-top: 10px;">Max Delta = {overall_max_detailed:.0f} mm</div>
+    <div style="font-size: 16px; color: {text_color};">Temperature: {global_temperature}°C | Expected X: {exp_x_detailed}mm | Expected Y: {exp_y_detailed}mm</div>
 </div>
 """, unsafe_allow_html=True)
 
-if color == "red" and max_delta > 60:
-    st.error(f"🚨🚨🚨 CRITICAL FAILURE on {faulty_sensor}! Delta = {max_delta:.1f}mm > 60mm! 🚨🚨🚨")
+if overall_color_detailed == "red" and overall_max_detailed > 60:
+    st.error(f"""
+    🚨 **CRITICAL FAILURE ALERT - {selected_atd}** 🚨
+    - Max Delta: {overall_max_detailed:.0f}mm exceeds critical threshold (60mm)
+    - Location: {atd['Location']} | Chainage: {atd['Chainage']}
+    - Immediate inspection required!
+    """)
+
+# Two-column display for North and South
+col_n, col_s = st.columns(2)
+
+with col_n:
+    st.markdown(f"### 🧭 NORTH DIRECTION - {atd['N_Mast']}")
+    st.markdown(f"**Status:** {n_icon_detailed} {n_status_detailed} | **Max Delta:** {max_delta_n_detailed:.0f}mm")
+    
+    # X-N and Y-N sensors
+    col_n1, col_n2 = st.columns(2)
+    with col_n1:
+        st.metric("X-N (Pulley)", f"{n_x} mm", delta=f"{n_x - exp_x_detailed:+.0f} mm")
+        st.metric("Y-N (Weight)", f"{n_y} mm", delta=f"{n_y - exp_y_detailed:+.0f} mm")
+    with col_n2:
+        st.metric("Delta X-N", f"{delta_n_x_detailed:.0f} mm")
+        st.metric("Delta Y-N", f"{delta_n_y_detailed:.0f} mm")
+    
+    # Progress bar
+    st.progress(min(max_delta_n_detailed / 100, 1.0))
+
+with col_s:
+    st.markdown(f"### 🧭 SOUTH DIRECTION - {atd['S_Mast']}")
+    st.markdown(f"**Status:** {s_icon_detailed} {s_status_detailed} | **Max Delta:** {max_delta_s_detailed:.0f}mm")
+    
+    # X-S and Y-S sensors
+    col_s1, col_s2 = st.columns(2)
+    with col_s1:
+        st.metric("X-S (Pulley)", f"{s_x} mm", delta=f"{s_x - exp_x_detailed:+.0f} mm")
+        st.metric("Y-S (Weight)", f"{s_y} mm", delta=f"{s_y - exp_y_detailed:+.0f} mm")
+    with col_s2:
+        st.metric("Delta X-S", f"{delta_s_x_detailed:.0f} mm")
+        st.metric("Delta Y-S", f"{delta_s_y_detailed:.0f} mm")
+    
+    # Progress bar
+    st.progress(min(max_delta_s_detailed / 100, 1.0))
 
 # ============================================================================
 # THRESHOLD LEGEND
 # ============================================================================
-st.markdown("### Alert Thresholds")
-c1, c2, c3, c4 = st.columns(4)
-c1.markdown("🟢 **0-20mm** → HEALTHY")
-c2.markdown("🟡 **21-40mm** → MAINTENANCE")
-c3.markdown("🟠 **41-60mm** → URGENT")
-c4.markdown("🔴 **>60mm** → CRITICAL")
+with st.expander("📊 Alert Threshold Legend", expanded=False):
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.markdown("🟢 **0-20mm**\n✅ HEALTHY\nNo action required")
+    with col2:
+        st.markdown("🟡 **21-40mm**\n⚠️ MAINTENANCE\nSchedule inspection")
+    with col3:
+        st.markdown("🟠 **41-60mm**\n🚨 URGENT\nInspect within 24hrs")
+    with col4:
+        st.markdown("🔴 **>60mm**\n🔴 CRITICAL\nImmediate action!")
 
 # ============================================================================
-# SENSOR DISPLAY WITH REAL-TIME DELTAS
+# FOOTER
 # ============================================================================
-st.subheader("📊 Individual Sensor Status")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    st.markdown("### 🔵 LEFT SIDE")
-    
-    # X1
-    if delta_x1 <= 20:
-        x1_color = "🟢"
-    elif delta_x1 <= 40:
-        x1_color = "🟡"
-    elif delta_x1 <= 60:
-        x1_color = "🟠"
-    else:
-        x1_color = "🔴"
-    
-    st.metric(
-        f"{x1_color} X1 (Left Pulley)",
-        f"{x1} mm",
-        delta=f"{x1 - expected_x:+.1f} mm (Expected: {expected_x}mm)",
-        delta_color="inverse"
-    )
-    st.write(f"**Delta X1 = {delta_x1:.1f} mm**")
-    st.progress(min(delta_x1 / 100, 1.0))
-    
-    # Y1
-    if delta_y1 <= 20:
-        y1_color = "🟢"
-    elif delta_y1 <= 40:
-        y1_color = "🟡"
-    elif delta_y1 <= 60:
-        y1_color = "🟠"
-    else:
-        y1_color = "🔴"
-    
-    st.metric(
-        f"{y1_color} Y1 (Left Counterweight)",
-        f"{y1} mm",
-        delta=f"{y1 - expected_y:+.1f} mm (Expected: {expected_y}mm)",
-        delta_color="inverse"
-    )
-    st.write(f"**Delta Y1 = {delta_y1:.1f} mm**")
-    st.progress(min(delta_y1 / 100, 1.0))
-
-with col2:
-    st.markdown("### 🔴 RIGHT SIDE")
-    
-    # X2
-    if delta_x2 <= 20:
-        x2_color = "🟢"
-    elif delta_x2 <= 40:
-        x2_color = "🟡"
-    elif delta_x2 <= 60:
-        x2_color = "🟠"
-    else:
-        x2_color = "🔴"
-    
-    st.metric(
-        f"{x2_color} X2 (Right Pulley)",
-        f"{x2} mm",
-        delta=f"{x2 - expected_x:+.1f} mm (Expected: {expected_x}mm)",
-        delta_color="inverse"
-    )
-    st.write(f"**Delta X2 = {delta_x2:.1f} mm**")
-    st.progress(min(delta_x2 / 100, 1.0))
-    
-    # Y2
-    if delta_y2 <= 20:
-        y2_color = "🟢"
-    elif delta_y2 <= 40:
-        y2_color = "🟡"
-    elif delta_y2 <= 60:
-        y2_color = "🟠"
-    else:
-        y2_color = "🔴"
-    
-    st.metric(
-        f"{y2_color} Y2 (Right Counterweight)",
-        f"{y2} mm",
-        delta=f"{y2 - expected_y:+.1f} mm (Expected: {expected_y}mm)",
-        delta_color="inverse"
-    )
-    st.write(f"**Delta Y2 = {delta_y2:.1f} mm**")
-    st.progress(min(delta_y2 / 100, 1.0))
-
-# ============================================================================
-# SUMMARY TABLE
-# ============================================================================
-with st.expander("📋 Complete Sensor Summary", expanded=False):
-    summary = pd.DataFrame({
-        "Sensor": ["X1 (Left)", "X2 (Right)", "Y1 (Left)", "Y2 (Right)"],
-        "Expected (mm)": [expected_x, expected_x, expected_y, expected_y],
-        "Actual (mm)": [x1, x2, y1, y2],
-        "Delta (mm)": [delta_x1, delta_x2, delta_y1, delta_y2],
-        "Status": [
-            "🟢" if delta_x1 <= 20 else ("🟡" if delta_x1 <= 40 else ("🟠" if delta_x1 <= 60 else "🔴")),
-            "🟢" if delta_x2 <= 20 else ("🟡" if delta_x2 <= 40 else ("🟠" if delta_x2 <= 60 else "🔴")),
-            "🟢" if delta_y1 <= 20 else ("🟡" if delta_y1 <= 40 else ("🟠" if delta_y1 <= 60 else "🔴")),
-            "🟢" if delta_y2 <= 20 else ("🟡" if delta_y2 <= 40 else ("🟠" if delta_y2 <= 60 else "🔴")),
-        ]
-    })
-    st.dataframe(summary, use_container_width=True, hide_index=True)
-
 st.divider()
-st.caption("🚆 Railway ATD Monitor | Alert updates when ANY parameter changes (Temperature, X1, X2, Y1, Y2)")
+st.caption("🚆 Railway ATD Monitoring System | N/S Direction Configuration | RDSO Alert Logic")
+st.caption("📊 Table shows all ATDs | Use sidebar to adjust sensor readings for any ATD")
