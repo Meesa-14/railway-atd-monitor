@@ -22,12 +22,11 @@ st.set_page_config(
 EMAIL_CONFIG = {
     'smtp_server': 'smtp.gmail.com',
     'smtp_port': 587,
-    'sender_email': 'your_email@gmail.com',  # CHANGE THIS
-    'sender_password': 'your_app_password',   # CHANGE THIS (use App Password, not regular password)
+    'sender_email': 'npsn2412@gmail.com',  # Your Gmail address
+    'sender_password': 'ixvvjlnabtiffcnd',     # The 16-char app password
     'recipient_emails': [
-        'maintenance@railway.gov.in',  # CHANGE THIS
-        'control_room@railway.gov.in', # CHANGE THIS
-        'supervisor@railway.gov.in'    # CHANGE THIS
+        'receee3rdyear@gmail.com',  # Who should get alerts
+        'venussynergysystems@outlook.com',
     ]
 }
 
@@ -567,4 +566,30 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 if overall_color_detailed == "red" and overall_max_detailed > 60:
-    st
+    st.error(f"""
+    🚨 **CRITICAL FAILURE ALERT - {selected_atd}** 🚨
+    - Max Delta: {overall_max_detailed:.0f}mm exceeds critical threshold (60mm)
+    - Location: {atd['Location']} | Chainage: {atd['Chainage']}
+    - Immediate inspection required!
+    """)
+
+# ============================================================================
+# THRESHOLD LEGEND
+# ============================================================================
+with st.expander("📊 Alert Threshold Legend", expanded=False):
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.markdown("🟢 **0-20mm**\n✅ HEALTHY\nNo action required")
+    with col2:
+        st.markdown("🟡 **21-40mm**\n⚠️ MAINTENANCE\nSchedule inspection")
+    with col3:
+        st.markdown("🟠 **41-60mm**\n🚨 URGENT\nInspect within 24hrs")
+    with col4:
+        st.markdown("🔴 **>60mm**\n🔴 CRITICAL\nImmediate action!")
+
+# ============================================================================
+# FOOTER
+# ============================================================================
+st.divider()
+st.caption("🚆 Railway ATD Monitoring System | N/S Direction Configuration | RDSO Alert Logic")
+st.caption("Alert thresholds: 🟢≤20mm | 🟡21-40mm | 🟠41-60mm | 🔴>60mm")
